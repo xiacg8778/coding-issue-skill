@@ -56,14 +56,11 @@ def read_rows(xlsx_path):
     return rows, wb
 
 
-def issue_url(project, code, base=None):
-    """生成事项页 URL。
-    ⚠️ 团队域名无法从 API 推断（每个团队独有子域，如 xxx.coding.net，OpenAPI 不返回）。
-    base 传入形如 https://xxx.coding.net 的团队域名 → https://xxx.coding.net/p/<project>/issues/<code>
-    缺省退回 e.coding.net 共享域查询页（可访问，具体单据需登录后在站内定位）。"""
-    if base:
-        return f"{base.rstrip('/')}/p/{project}/issues/{code}"
-    return f"https://e.coding.net/p/{project}/issues?issue_code={code}"
+def issue_url(project, code, base="https://sugaoxin.coding.net"):
+    """生成事项页直达 URL（格式经用户实证：https://sugaoxin.coding.net/p/<project>/bug-tracking/issues/<code>）。
+    团队域名每个团队独有、OpenAPI 不返回；默认 sugaoxin.coding.net 为本团队实证域名，
+    其他团队经 --base-url 覆盖（传 https://xxx.coding.net）。"""
+    return f"{base.rstrip('/')}/p/{project}/bug-tracking/issues/{code}"
 
 
 def server_side_dedup(token, title, project):
