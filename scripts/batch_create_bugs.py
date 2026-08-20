@@ -112,6 +112,11 @@ def main():
     results = []
     for n, row in enumerate(todo, 1):
         did = row.get("defect_id") or f"行{row['_row_num']}"
+        # 幂等保护：已创建过（issue_code 已回填）的行跳过，防重跑重复建单
+        if row.get("issue_code"):
+            results.append({"did": did, "status": "already_created", "detail": f"issue_code={row['issue_code']} 已存在，跳过"})
+            print(f"  [{n}/{len(todo)}] {did} ⏭ 已创建过 {row['issue_code']}，跳过")
+            continue
         errs = validate_row(row, known_projects)
         if errs:
             results.append({"did": did, "status": "skipped", "detail": "; ".join(errs)})

@@ -50,17 +50,35 @@ def get_token(arg_token):
 
 
 def call_api(token, payload, verbose=False):
-    """调用 CODING Open API，返回 Response 字典；出错则打印错误并退出"""
+    """调用 CODING Open API，返回 Response 字典；出错则打印错误并退出
+    网络类异常（SSL 瞬断/超时/连接重置）自动退避重试 3 次（1s/2s/4s）"""
+    import time
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(API_URL, data=data, method="POST")
     req.add_header("Authorization", f"token {token}")
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
-    try:
-        resp = urllib.request.urlopen(req, timeout=60)
-        d = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        sys.exit(f"HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:500]}")
+    last_net_err = None
+    for attempt in range(4):  # 1 次原始 + 3 次重试
+        try:
+            resp = urllib.request.urlopen(req, timeout=60)
+            d = json.loads(resp.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as e:
+            sys.exit(f"HTTP {e.code}: {e.read().decode('utf-8', 'ignore')[:500]}")
+        except urllib.error.URLError as e:
+            last_net_err = e
+            if attempt < 3:
+                wait = 2 ** attempt
+                print(f"    [网络重试] {attempt + 1}/3: {str(e)[:80]}，{wait}s 后重试")
+                time.sleep(wait)
+                # urllib Request 对象 urlopen 后不可复用，重建
+                req = urllib.request.Request(API_URL, data=data, method="POST")
+                req.add_header("Authorization", f"token {token}")
+                req.add_header("Content-Type", "application/json")
+                req.add_header("Accept", "application/json")
+    else:
+        sys.exit(f"网络错误（重试后仍失败）: {last_net_err}")
     response = d.get("Response", {})
     if "Error" in response:
         err = response["Error"]
