@@ -62,7 +62,14 @@ python ~/.workbuddy/skills/coding-issue-bug/scripts/batch_create_bugs.py <补充
 python ~/.workbuddy/skills/coding-issue-bug/scripts/batch_create_bugs.py <补充后的.xlsx> --execute --write-back
 ```
 
-行为约定：`create` 列 no 的行跳过；必填缺失/图片路径不存在/项目不在 token 可见范围的行标 skipped 带原因，**单条失败不中断批次**，结束输出汇总。dry-run 预检走 `DescribeCodingCurrentUser` → `DescribeUserProjects`（⚠️ 必须带 UserId，无参报"团队成员不存在"）。Excel 列结构由 `export_defects_excel.py` 的 COLUMNS 定义，两脚本配套使用。
+行为约定：`create` 列 no 的行跳过；必填缺失/图片路径不存在/项目不在 token 可见范围的行标 skipped 带原因，**单条失败不中断批次**，结束输出汇总。dry-run 预检走 `DescribeCodingCurrentUser` → `DescribeUserProjects`（⚠️ 必须带 UserId，无参报"团队成员不存在"）。事项页 URL 由 `resolve_team_host()` 动态解析团队域名（⚠️ `DescribeTeam` 的团队信息在 **`Data`** 键下，不是 `Team` 键——读错键拿到空会误判"接口不返回域名"而转向臆猜）。Excel 列结构由 `export_defects_excel.py` 的 COLUMNS 定义，两脚本配套使用。
+
+### 铁律（批量提单，防重复踩坑）
+
+1. **域名不猜**：团队域名只能从 `DescribeTeam` 的 `Data.TeamHost` 动态解析或用户实证获得，任何 `{project}.coding.net` 形态都是臆造，必 404。
+2. **网络模糊失败 = 请求可能已生效**：CreateIssue 报网络错误（SSL 瞬断/超时）时，单据可能已建。重试前必须按标题查服务端（脚本已内置幂等②）；发现重复单用 `DeleteIssue` 清理，别让用户从 CODING 页面先发现。
+3. **接口返回空先怀疑取错键**：下"接口不可用"结论前 dump 原始响应核对键名（本 skill 两次翻车均为取错键：DescribeUserProjects 缺 UserId、DescribeTeam 读 Team 而非 Data）。
+4. **提单后必须核验**：`DescribeIssue` 逐单确认处理人/附件数/状态，Excel 回填 `--write-back`，defect_ledger 同步 tracker_id + submitted。
 
 ## 手动 API 路径（脚本不可用时）
 
@@ -121,6 +128,10 @@ Action: CreateIssue
 | `issue_file_not_exist` | FileIds 传了附件预上传 ID | 走 CreateFile 登记拿真实文件 ID |
 | `issue_project_file_not_exist` | CreateIssue 的 FileIds 也是文件网盘/登记 ID | 同上 |
 | `auth_error`（CreateFile） | AuthToken/StorageKey 不匹配或已过期 | 重新走 Step 4 全流程 |
+| `团队成员不存在`（DescribeUserProjects） | 未传 UserId | 先 `DescribeCodingCurrentUser` 取 Id 再查询 |
+| 事项页 URL 404 | 团队域名不可臆造（`{project}.coding.net` 不存在） | `DescribeProjectByName`→TeamId→`DescribeTeam` 读 **`Data.TeamHost`**；格式 `{TeamHost}/p/{project}/bug-tracking/issues/{code}` |
+| `SSL: UNEXPECTED_EOF_WHILE_READING` | e.coding.net 网络瞬断 | call_api 已内置 3 次退避重试；仍失败按行跳过不中断批次 |
+| 批量重跑建出重复单 | CreateIssue 已送达但响应丢失 → 客户端误判 failed | 重提前按标题查 `DescribeIssueList` 认领已有单（脚本幂等②已内置）；重复废单用 `DeleteIssue` 清理 |
 
 ## 注意
 
