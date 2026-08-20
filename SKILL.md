@@ -45,6 +45,25 @@ python ~/.workbuddy/skills/coding-issue-bug/scripts/create_bug.py \
   --image C:/截图3.png
 ```
 
+## 批量提单（QA-Team 测试报告 → Excel 补充 → 批量建单）
+
+适用场景：qa-team 测试完成产出 `defect_ledger.json`（或缺陷草稿列表）后，导出 Excel 给用户补充项目/处理人等信息，再批量提单。
+
+```bash
+# 1. 导出 Excel 补充模板（QA 产出列灰底自动带出，用户补充列黄底标*必填）
+python ~/.workbuddy/skills/coding-issue-bug/scripts/export_defects_excel.py <defect_ledger.json>
+
+# 2. 用户在 Excel 黄底列补充：project*/assignee*/owner/category/images/priority/due_date/create*
+
+# 3a. dry-run 校验（必做第一步，零写入）
+python ~/.workbuddy/skills/coding-issue-bug/scripts/batch_create_bugs.py <补充后的.xlsx>
+
+# 3b. 真实提单 + 结果回填 Excel（issue_code/issue_url/status 三列）
+python ~/.workbuddy/skills/coding-issue-bug/scripts/batch_create_bugs.py <补充后的.xlsx> --execute --write-back
+```
+
+行为约定：`create` 列 no 的行跳过；必填缺失/图片路径不存在/项目不在 token 可见范围的行标 skipped 带原因，**单条失败不中断批次**，结束输出汇总。dry-run 预检走 `DescribeCodingCurrentUser` → `DescribeUserProjects`（⚠️ 必须带 UserId，无参报"团队成员不存在"）。Excel 列结构由 `export_defects_excel.py` 的 COLUMNS 定义，两脚本配套使用。
+
 ## 手动 API 路径（脚本不可用时）
 
 所有请求：`POST https://e.coding.net/open-api`，Header `Authorization: token <CODING_TOKEN>`，Content-Type application/json。脚本本质也是走这些步骤，可对照。
@@ -112,4 +131,6 @@ Action: CreateIssue
 ## Resources
 
 - `scripts/create_bug.py`：一键创建脚本（推荐，含成员解析/字段补齐/附件上传）
+- `scripts/export_defects_excel.py`：缺陷台账 → Excel 补充模板导出（qa-team 联动入口）
+- `scripts/batch_create_bugs.py`：Excel 驱动批量提单（默认 dry-run，--execute 真实创建，--write-back 回填）
 - `references/api_reference.md`：接口与字段细节速查
