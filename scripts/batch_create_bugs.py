@@ -56,6 +56,24 @@ def read_rows(xlsx_path):
     return rows, wb
 
 
+def issue_url(project, code):
+    return f"https://{project}.coding.net/p/{project}/issues?issue_code={code}"
+
+
+def server_side_dedup(token, title, project):
+    """按标题在项目 DEFECT 列表查同名单（最近 50 条），返回 (code, name) 或 None。
+    用于"网络模糊失败"行的重提前防重：请求可能已送达建单，只是响应丢失。"""
+    try:
+        resp = call_api(token, {"Action": "DescribeIssueList", "ProjectName": project,
+                                "IssueType": "DEFECT", "PageNumber": 1, "PageSize": 50})
+        for i in resp.get("IssueList", []):
+            if (i.get("Name") or "").strip() == (title or "").strip():
+                return str(i.get("Code")), i.get("Name")
+    except SystemExit:
+        pass  # 查询失败不阻断主流程，退回正常创建
+    return None
+
+
 def validate_row(row, known_projects):
     """dry-run 校验：返回错误列表（空=可提单）"""
     errs = []
@@ -112,11 +130,21 @@ def main():
     results = []
     for n, row in enumerate(todo, 1):
         did = row.get("defect_id") or f"行{row['_row_num']}"
-        # 幂等保护：已创建过（issue_code 已回填）的行跳过，防重跑重复建单
+        # 幂等保护①：Excel 已回填 issue_code 的行跳过，防重跑重复建单
         if row.get("issue_code"):
             results.append({"did": did, "status": "already_created", "detail": f"issue_code={row['issue_code']} 已存在，跳过"})
             print(f"  [{n}/{len(todo)}] {did} ⏭ 已创建过 {row['issue_code']}，跳过")
             continue
+        # 幂等保护②：失败/跳过行重提时先按标题查服务端，防"网络模糊失败"重复建单
+        # 背景：CreateIssue 请求送达但响应被 SSL 瞬断吞掉时，客户端误判 failed，重提即重复
+        if str(row.get("status", "")).startswith(("failed", "skipped")):
+            exist = server_side_dedup(token, row["title*"], row.get("project*") or "")
+            if exist:
+                results.append({"did": did, "status": "recovered", "code": exist[0],
+                                "url": f"https://{row.get('project*')}.coding.net/p/{row.get('project*')}/issues?issue_code={exist[0]}",
+                                "detail": f"服务端已存在同名单 {exist[0]}（此前模糊失败实际已建单），直接认领"})
+                print(f"  [{n}/{len(todo)}] {did} ↻ 服务端已有 {exist[0]}，认领（不重建）")
+                continue
         errs = validate_row(row, known_projects)
         if errs:
             results.append({"did": did, "status": "skipped", "detail": "; ".join(errs)})
