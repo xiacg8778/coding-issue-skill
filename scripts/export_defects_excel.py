@@ -15,6 +15,7 @@ Excel 结构:
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import sys
@@ -61,14 +62,64 @@ def load_defects(path):
     return data.get("run_id", "") if isinstance(data, dict) else "", defects
 
 
+def collect_screenshots(run_root, case_id, seen_hashes):
+    """收集用例证据截图（evidence/*/case_id/ 下递归 png/jpg），按 md5 跨缺陷去重。
+    返回 (绝对路径列表, 本用例新增数)；重复图（同 md5 已被其他缺陷引用）跳过。"""
+    cands = []
+    for side in ("web", "api", "mobile"):
+        cdir = os.path.join(run_root, "evidence", side, case_id)
+        if os.path.isdir(cdir):
+            for dp, _, fs in os.walk(cdir):
+                for f in sorted(fs):
+                    if f.lower().endswith((".png", ".jpg", ".jpeg")):
+                        cands.append(os.path.join(dp, f))
+    kept, dup = [], 0
+    for p in sorted(cands):
+        h = hashlib.md5(open(p, "rb").read()).hexdigest()
+        if h in seen_hashes:
+            dup += 1
+            continue
+        seen_hashes.add(h)
+        kept.append(p)
+    if dup:
+        print(f"    [去重] {case_id}: 跳过 {dup} 张跨缺陷重复截图")
+    return kept
+
+
+def load_case_steps(run_root, case_id):
+    """从 test_cases.json 提取用例复现步骤与预期，返回 (steps, expected) 或 (None, None)"""
+    tc = os.path.join(run_root, "test_cases.json")
+    if not os.path.isfile(tc):
+        return None, None
+    try:
+        with open(tc, encoding="utf-8") as f:
+            data = json.load(f)
+        for c in (data.get("cases") or [] if isinstance(data, dict) else data):
+            if c.get("case_id") == case_id:
+                return c.get("steps"), c.get("expected")
+    except Exception:
+        pass
+    return None, None
+
+
 def main():
     ap = argparse.ArgumentParser(description="缺陷台账导出 Excel 补充模板")
     ap.add_argument("ledger", help="defect_ledger.json 路径（qa-team Phase 6 产出）")
     ap.add_argument("-o", "--output", default=None, help="输出 xlsx 路径（默认同目录 defects_<run_id>.xlsx）")
     ap.add_argument("--project", default="BrainServicePlatform", help="project 列预填默认值（默认 BrainServicePlatform，留空字符串则不预填）")
+    ap.add_argument("--run-root", default=None, help="qa-team run 目录（自动关联 test_cases.json 复现步骤与 evidence 截图，md5 去重）")
+    ap.add_argument("--max-images", type=int, default=4, help="每条缺陷最多挂载截图数（默认 4）")
     args = ap.parse_args()
 
     run_id, defects = load_defects(args.ledger)
+    # run 目录自动推断：缺省取 ledger 同级向上两级（report/defect_ledger.json 的惯例位置）
+    run_root = args.run_root
+    if not run_root:
+        guess = os.path.dirname(os.path.dirname(os.path.abspath(args.ledger)))
+        if os.path.isfile(os.path.join(guess, "test_cases.json")):
+            run_root = guess
+            print(f"[自动关联] run 目录: {run_root}")
+    seen_hashes = set()
     out = args.output or os.path.join(
         os.path.dirname(os.path.abspath(args.ledger)),
         f"defects_{run_id or 'draft'}.xlsx")
@@ -94,27 +145,42 @@ def main():
     # 数据行
     for i, d in enumerate(defects, 2):
         title = d.get("title") or f"[{d.get('defect_id','')}] {d.get('case_id','')} 用例失败"
-        # 描述 = 摘要 + 回归归因（若有）
+        # 描述 = 摘要 + 复现步骤 + 预期 + 回归归因（若有）
         desc_parts = []
         for k in ("summary", "description", "evidence"):
             if d.get(k):
                 desc_parts.append(str(d[k]))
+        cid = d.get("case_id")
+        steps, expected = (None, None)
+        if run_root and cid:
+            steps, expected = load_case_steps(run_root, cid)
+        if steps:
+            desc_parts.append(f"【复现步骤】\n{steps}")
+        if expected:
+            desc_parts.append(f"【预期结果】\n{expected}")
         rg = d.get("regression")
         if isinstance(rg, dict):
             if rg.get("root_cause"):
-                desc_parts.append(f"根因: {rg['root_cause']}")
+                desc_parts.append(f"【根因】{rg['root_cause']}")
             if rg.get("evidence"):
-                desc_parts.append(f"证据: {rg['evidence']}")
+                desc_parts.append(f"【证据】{rg['evidence']}")
             if rg.get("reproduced"):
                 desc_parts.append("（已复测复现并经后端确认）")
+        # 证据截图自动关联（跨缺陷 md5 去重）
+        images = []
+        if run_root and cid:
+            images = collect_screenshots(run_root, cid, seen_hashes)[:args.max_images]
         row_vals = {
             "defect_id": d.get("defect_id", ""),
             "title*": title,
-            "description": "\n".join(desc_parts),
+            "description": "\n\n".join(desc_parts),
             "severity": d.get("severity", ""),
             "project*": args.project,
+            "images": ";".join(images),
             "create*": "yes",
         }
+        if images:
+            print(f"    {d.get('defect_id','')}: 关联 {len(images)} 张证据截图")
         for col, (title_h, _, src, _) in enumerate(COLUMNS, 1):
             c = ws.cell(row=i, column=col, value=row_vals.get(title_h, ""))
             c.alignment = center if title_h in ("defect_id", "severity", "priority", "due_date", "create*", "issue_code") else left_wrap
