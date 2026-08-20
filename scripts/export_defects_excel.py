@@ -5,8 +5,9 @@
 读取 qa-team 的 defect_ledger.json（或 qa-reporter 缺陷草稿列表），生成供用户补充提单信息的 xlsx。
 
 用法:
-  python export_defects_excel.py <defect_ledger.json> [-o 输出.xlsx]
+  python export_defects_excel.py <defect_ledger.json> [-o 输出.xlsx] [--project 默认项目名]
   不指定 -o 时默认输出到输入文件同目录 defects_<run_id>.xlsx
+  --project 预填 project 列（默认 BrainServicePlatform）
 
 Excel 结构:
   - Sheet「提单清单」: QA 产出列（只读灰底）+ 用户补充列（黄底，标 * 必填）
@@ -64,6 +65,7 @@ def main():
     ap = argparse.ArgumentParser(description="缺陷台账导出 Excel 补充模板")
     ap.add_argument("ledger", help="defect_ledger.json 路径（qa-team Phase 6 产出）")
     ap.add_argument("-o", "--output", default=None, help="输出 xlsx 路径（默认同目录 defects_<run_id>.xlsx）")
+    ap.add_argument("--project", default="BrainServicePlatform", help="project 列预填默认值（默认 BrainServicePlatform，留空字符串则不预填）")
     args = ap.parse_args()
 
     run_id, defects = load_defects(args.ledger)
@@ -92,12 +94,25 @@ def main():
     # 数据行
     for i, d in enumerate(defects, 2):
         title = d.get("title") or f"[{d.get('defect_id','')}] {d.get('case_id','')} 用例失败"
+        # 描述 = 摘要 + 回归归因（若有）
+        desc_parts = []
+        for k in ("summary", "description", "evidence"):
+            if d.get(k):
+                desc_parts.append(str(d[k]))
+        rg = d.get("regression")
+        if isinstance(rg, dict):
+            if rg.get("root_cause"):
+                desc_parts.append(f"根因: {rg['root_cause']}")
+            if rg.get("evidence"):
+                desc_parts.append(f"证据: {rg['evidence']}")
+            if rg.get("reproduced"):
+                desc_parts.append("（已复测复现并经后端确认）")
         row_vals = {
             "defect_id": d.get("defect_id", ""),
             "title*": title,
-            "description": (d.get("summary") or d.get("description")
-                            or d.get("evidence") or ""),
+            "description": "\n".join(desc_parts),
             "severity": d.get("severity", ""),
+            "project*": args.project,
             "create*": "yes",
         }
         for col, (title_h, _, src, _) in enumerate(COLUMNS, 1):
@@ -115,7 +130,7 @@ def main():
         ["颜色: 灰底=QA产出(可改) | 黄底=用户补充(标*必填) | 绿底=提单结果(勿动，脚本回填)"],
         [""],
         ["用户补充列说明:"],
-        ["  project*   CODING 项目名称，如 BrainServicePlatform"],
+        ["  project*   CODING 项目名称（已预填，可改）"],
         ["  assignee*  处理人姓名（须为项目成员）"],
         ["  owner      问题归属人，留空=同处理人"],
         ["  category   Bug归类选项标题（如 web前端），留空=取第一个选项"],
