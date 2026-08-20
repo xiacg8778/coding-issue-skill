@@ -56,8 +56,14 @@ def read_rows(xlsx_path):
     return rows, wb
 
 
-def issue_url(project, code):
-    return f"https://{project}.coding.net/p/{project}/issues?issue_code={code}"
+def issue_url(project, code, base=None):
+    """生成事项页 URL。
+    ⚠️ 团队域名无法从 API 推断（每个团队独有子域，如 xxx.coding.net，OpenAPI 不返回）。
+    base 传入形如 https://xxx.coding.net 的团队域名 → https://xxx.coding.net/p/<project>/issues/<code>
+    缺省退回 e.coding.net 共享域查询页（可访问，具体单据需登录后在站内定位）。"""
+    if base:
+        return f"{base.rstrip('/')}/p/{project}/issues/{code}"
+    return f"https://e.coding.net/p/{project}/issues?issue_code={code}"
 
 
 def server_side_dedup(token, title, project):
@@ -102,6 +108,7 @@ def main():
     ap.add_argument("--execute", action="store_true", help="真实创建（缺省仅 dry-run 校验）")
     ap.add_argument("--write-back", action="store_true", help="把结果回填 Excel")
     ap.add_argument("--token", default=None)
+    ap.add_argument("--base-url", default=None, help="团队域名（如 https://xxx.coding.net），用于生成可直达的事项页 URL；团队域名 API 不可查，须从浏览器地址栏复制")
     args = ap.parse_args()
 
     rows, wb = read_rows(args.xlsx)
@@ -141,7 +148,7 @@ def main():
             exist = server_side_dedup(token, row["title*"], row.get("project*") or "")
             if exist:
                 results.append({"did": did, "status": "recovered", "code": exist[0],
-                                "url": f"https://{row.get('project*')}.coding.net/p/{row.get('project*')}/issues?issue_code={exist[0]}",
+                                "url": issue_url(row.get("project*") or "", exist[0], args.base_url),
                                 "detail": f"服务端已存在同名单 {exist[0]}（此前模糊失败实际已建单），直接认领"})
                 print(f"  [{n}/{len(todo)}] {did} ↻ 服务端已有 {exist[0]}，认领（不重建）")
                 continue
@@ -219,7 +226,7 @@ def main():
             final = call_api(token, {"Action": "DescribeIssue", "ProjectName": project, "IssueCode": issue_code})["Issue"]
             assert final["Assignee"]["Name"] and len(final.get("Files", [])) >= attached
 
-            url = f"https://{project}.coding.net/p/{project}/issues?issue_code={issue_code}"
+            url = issue_url(project, str(issue_code), args.base_url)
             results.append({"did": did, "status": "created", "code": str(issue_code), "url": url, "detail": f"附件{attached}"})
             print(f"  [{n}/{len(todo)}] {did} ✓ created: {issue_code}（附件{attached}）")
 
