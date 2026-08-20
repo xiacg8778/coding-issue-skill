@@ -1,6 +1,7 @@
 ---
 name: coding-issue-bug
-description: 在 CODING DevOps（coding.net）创建 Bug 缺陷单，支持指定处理人/问题归属人/Bug归类，并可附带本地图片（支持多张）。当用户要求"在 CODING 建 bug/缺陷单/工作项"、"创建带图片的 bug"、"给 CODING 提缺陷"时使用。自动处理成员ID解析、必填字段补齐、附件上传（预签名+COS+登记+挂载）全链路。适合 AI/江苏高信/智慧服务区等 CODING 团队项目。agent_created: true
+description: 在 CODING DevOps（coding.net）创建 Bug 缺陷单，支持指定处理人/问题归属人/Bug归类，并可附带本地图片（支持多张）。当用户要求"在 CODING 建 bug/缺陷单/工作项"、"创建带图片的 bug"、"给 CODING 提缺陷"时使用。自动处理成员ID解析、必填字段补齐、附件上传（预签名+COS+登记+挂载）全链路。适合 AI/江苏高信/智慧服务区等 CODING 团队项目。
+agent_created: true
 ---
 
 # CODING 创建 Bug 单（含附件）
