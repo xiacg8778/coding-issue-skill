@@ -56,11 +56,28 @@ def read_rows(xlsx_path):
     return rows, wb
 
 
-def issue_url(project, code, base="https://sugaoxin.coding.net"):
-    """生成事项页直达 URL（格式经用户实证：https://sugaoxin.coding.net/p/<project>/bug-tracking/issues/<code>）。
-    团队域名每个团队独有、OpenAPI 不返回；默认 sugaoxin.coding.net 为本团队实证域名，
-    其他团队经 --base-url 覆盖（传 https://xxx.coding.net）。"""
-    return f"{base.rstrip('/')}/p/{project}/bug-tracking/issues/{code}"
+def resolve_team_host(token, project):
+    """经 DescribeProjectByName → DescribeTeam 动态解析团队域名。
+    ⚠️ 响应结构：团队信息在 Data 键下（Data.TeamHost），不是 Team 键——读错键会误判'接口不可用'。
+    解析失败返回 None，调用方回退 --base-url 或默认值。"""
+    try:
+        proj = call_api(token, {"Action": "DescribeProjectByName", "ProjectName": project})["Project"]
+        team_id = proj.get("TeamId")
+        if not team_id:
+            return None
+        t = call_api(token, {"Action": "DescribeTeam", "TeamId": team_id})
+        data = t.get("Data") or {}
+        return data.get("TeamHost")
+    except SystemExit:
+        return None
+
+
+def issue_url(project, code, base=None):
+    """生成事项页直达 URL。
+    base 优先级：显式 --base-url > resolve_team_host 动态解析 > 默认 sugaoxin.coding.net（本团队实证值）。
+    路径格式实证：https://sugaoxin.coding.net/p/<project>/bug-tracking/issues/<code>（用户验证可访问）。"""
+    b = (base or "https://sugaoxin.coding.net").rstrip("/")
+    return f"{b}/p/{project}/bug-tracking/issues/{code}"
 
 
 def server_side_dedup(token, title, project):
@@ -131,6 +148,16 @@ def main():
     # 缓存: 项目 → (成员表/字段配置)，避免同项目多行重复查询
     proj_cache = {}
 
+    # 团队域名动态解析（一次）：DescribeProjectByName → DescribeTeam → Data.TeamHost
+    team_host = None
+    if todo:
+        team_host = resolve_team_host(token, todo[0].get("project*") or "")
+        if team_host:
+            print(f"[域名] TeamHost 解析成功: {team_host}")
+        else:
+            print("[域名] TeamHost 解析失败，回退 --base-url/默认值")
+    effective_base = args.base_url or team_host
+
     results = []
     for n, row in enumerate(todo, 1):
         did = row.get("defect_id") or f"行{row['_row_num']}"
@@ -145,7 +172,7 @@ def main():
             exist = server_side_dedup(token, row["title*"], row.get("project*") or "")
             if exist:
                 results.append({"did": did, "status": "recovered", "code": exist[0],
-                                "url": issue_url(row.get("project*") or "", exist[0], args.base_url),
+                                "url": issue_url(row.get("project*") or "", exist[0], effective_base),
                                 "detail": f"服务端已存在同名单 {exist[0]}（此前模糊失败实际已建单），直接认领"})
                 print(f"  [{n}/{len(todo)}] {did} ↻ 服务端已有 {exist[0]}，认领（不重建）")
                 continue
@@ -223,7 +250,7 @@ def main():
             final = call_api(token, {"Action": "DescribeIssue", "ProjectName": project, "IssueCode": issue_code})["Issue"]
             assert final["Assignee"]["Name"] and len(final.get("Files", [])) >= attached
 
-            url = issue_url(project, str(issue_code), args.base_url)
+            url = issue_url(project, str(issue_code), effective_base)
             results.append({"did": did, "status": "created", "code": str(issue_code), "url": url, "detail": f"附件{attached}"})
             print(f"  [{n}/{len(todo)}] {did} ✓ created: {issue_code}（附件{attached}）")
 
